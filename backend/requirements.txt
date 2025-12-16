@@ -1,0 +1,56 @@
+# Web Framework
+Flask
+Flask-CORS
+flask-socketio
+python-dotenv
+python-multipart
+Werkzeug
+
+# Database
+pymongo
+dnspython
+
+# Computer Vision & AI
+ultralytics  # YOLOv8
+torch
+torchvision
+torchaudio  # Optional for audio processing
+opencv-python
+numpy
+Pillow
+scikit-learn
+scipy
+
+# Video Processing
+imageio
+imageio-ffmpeg
+moviepy
+pytorchvideo  # video model zoo (X3D, SlowFast, etc.)
+
+# Location & Maps
+googlemaps
+geopy
+
+# Alert & Voice
+twilio
+gtts
+pyttsx3
+simpleaudio
+
+# Real-time Communication
+eventlet
+redis  # Optional for caching/queues
+
+# Data Processing & Utilities
+pandas
+pydantic
+pyyaml
+python-dateutil
+requests
+urllib3
+
+# Optional - For specific features
+# streamlink  # For fetching online streams
+# onnxruntime  # For ONNX model inference
+# tensorflow  # Alternative to PyTorch
+# keras  # Alternative to PyTorch
