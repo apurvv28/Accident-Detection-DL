@@ -21,18 +21,53 @@ logger = setup_logger(__name__)
 # Register routes with blueprint
 from . import api_v1
 
+def get_or_create_default_camera(db, default_lat=28.6139, default_lng=77.2090):
+    """Get or create default camera for video uploads."""
+    DEFAULT_CAMERA_ID = 'default_upload_camera'
+    
+    # Try to get existing default camera
+    camera = db.get_camera(DEFAULT_CAMERA_ID)
+    if camera:
+        return DEFAULT_CAMERA_ID
+    
+    # Create default camera if it doesn't exist
+    default_camera_data = {
+        'camera_id': DEFAULT_CAMERA_ID,
+        'name': 'Default Upload Camera',
+        'stream_url': 'N/A - Video Upload Only',
+        'status': 'active',
+        'location': {
+            'latitude': default_lat,
+            'longitude': default_lng,
+            'address': 'Video Upload System'
+        },
+        'created_at': datetime.now(),
+        'updated_at': datetime.now()
+    }
+    
+    try:
+        db.insert_camera(default_camera_data)
+        logger.info(f"Created default camera: {DEFAULT_CAMERA_ID}")
+        return DEFAULT_CAMERA_ID
+    except Exception as e:
+        logger.warning(f"Failed to create default camera, using ID anyway: {e}")
+        return DEFAULT_CAMERA_ID
+
 def process_video_async(video_path, camera_id, metadata):
     """Process video in background thread using frame-by-frame processing."""
     try:
         db = DatabaseManager()
         detector = AccidentDetector()
         alert = AlertDispatcher()
+        
+        accident_count = 0
 
         for frame in frame_generator_from_file(video_path, fps=current_app.config.get('PROCESS_FPS', 2)):
             pred = detector.process_frame(frame)
             if pred and pred.is_accident:
+                accident_count += 1
                 detection_data = {
-                    'detection_id': f"det_{int(time.time())}",
+                    'detection_id': f"det_{int(time.time())}_{uuid.uuid4().hex[:8]}",
                     'camera_id': camera_id,
                     'timestamp': datetime.now(),
                     'video_path': video_path,
@@ -47,7 +82,7 @@ def process_video_async(video_path, camera_id, metadata):
                 db.insert_detection(detection_data)
                 alert.send_accident_alert(detection_data, camera_id)
 
-        logger.info(f"Video processing completed: {video_path}")
+        logger.info(f"Video processing completed: {video_path}, Accidents detected: {accident_count}")
 
     except Exception as e:
         logger.error(f"Video processing failed: {str(e)}")
@@ -67,11 +102,6 @@ def upload_video():
         type: file
         required: true
         description: CCTV video file
-      - name: camera_id
-        in: formData
-        type: string
-        required: true
-        description: Camera identifier
       - name: metadata
         in: formData
         type: string
@@ -100,16 +130,18 @@ def upload_video():
                 'message': 'No file selected'
             }), 400
         
-        # Get camera_id
-        camera_id = request.form.get('camera_id')
-        if not camera_id:
-            return jsonify({
-                'status': 'error',
-                'message': 'Camera ID is required'
-            }), 400
-        
         # Get metadata
         metadata = request.form.get('metadata', '{}')
+        
+        # Get camera_id from request (static camera_id sent from frontend)
+        camera_id = request.form.get('camera_id', 'default_upload_camera')
+        
+        # Ensure default camera exists in database
+        db = DatabaseManager()
+        default_lat = current_app.config.get('DEFAULT_LATITUDE', 28.6139)
+        default_lng = current_app.config.get('DEFAULT_LONGITUDE', 77.2090)
+        # This ensures the camera exists, but we use the camera_id from request
+        get_or_create_default_camera(db, default_lat, default_lng)
         
         # Validate file
         if not allowed_file(file.filename):
@@ -139,7 +171,8 @@ def upload_video():
             'message': 'Video uploaded and processing started',
             'video_id': unique_filename,
             'camera_id': camera_id,
-            'processing_status': 'in_progress'
+            'processing_status': 'in_progress',
+            'camera_name': 'Default Upload Camera'
         }), 200
         
     except Exception as e:

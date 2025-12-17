@@ -49,8 +49,3 @@ python-dateutil
 requests
 urllib3
 
-# Optional - For specific features
-# streamlink  # For fetching online streams
-# onnxruntime  # For ONNX model inference
-# tensorflow  # Alternative to PyTorch
-# keras  # Alternative to PyTorch

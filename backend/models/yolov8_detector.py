@@ -13,7 +13,7 @@ try:
     YOLO_AVAILABLE = True
 except Exception:
     YOLO_AVAILABLE = False
-    print("⚠️ Warning: ultralytics not installed. Using dummy detector.")
+    print("Warning: ultralytics not installed. Using dummy detector.")
 
 # Optional: torch for device selection and tensor ops
 try:

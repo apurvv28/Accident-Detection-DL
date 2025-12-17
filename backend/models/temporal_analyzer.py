@@ -17,7 +17,7 @@ try:
 	TORCH_AVAILABLE = True
 except Exception:
 	TORCH_AVAILABLE = False
-	print("⚠️ Warning: PyTorch not installed. Using dummy temporal analyzer.")
+	print("Warning: PyTorch not installed. Using dummy temporal analyzer.")
 
 from ..utils.logger import setup_logger
 from .schemas import TrackedObject, AccidentPrediction
@@ -34,62 +34,66 @@ except Exception:
 logger = setup_logger(__name__)
 
 
-class ConvLSTM(nn.Module):
-	"""
-	ConvLSTM layer for spatiotemporal feature extraction
-	"""
-	def __init__(self, input_dim, hidden_dim, kernel_size, bias=True):
-		super(ConvLSTM, self).__init__()
-		self.input_dim = input_dim
-		self.hidden_dim = hidden_dim
-		self.kernel_size = kernel_size
-		self.padding = kernel_size // 2
-		self.bias = bias
+# Only define PyTorch classes when PyTorch is available
+if TORCH_AVAILABLE:
+	class ConvLSTM(nn.Module):
+		"""
+		ConvLSTM layer for spatiotemporal feature extraction
+		"""
+		def __init__(self, input_dim, hidden_dim, kernel_size, bias=True):
+			super(ConvLSTM, self).__init__()
+			self.input_dim = input_dim
+			self.hidden_dim = hidden_dim
+			self.kernel_size = kernel_size
+			self.padding = kernel_size // 2
+			self.bias = bias
 
-		# Convolutional layers for gates
-		self.conv_i = nn.Conv2d(in_channels=input_dim + hidden_dim,
-							   out_channels=hidden_dim,
-							   kernel_size=kernel_size,
-							   padding=self.padding,
-							   bias=bias)
+			# Convolutional layers for gates
+			self.conv_i = nn.Conv2d(in_channels=input_dim + hidden_dim,
+								   out_channels=hidden_dim,
+								   kernel_size=kernel_size,
+								   padding=self.padding,
+								   bias=bias)
 
-		self.conv_f = nn.Conv2d(in_channels=input_dim + hidden_dim,
-							   out_channels=hidden_dim,
-							   kernel_size=kernel_size,
-							   padding=self.padding,
-							   bias=bias)
+			self.conv_f = nn.Conv2d(in_channels=input_dim + hidden_dim,
+								   out_channels=hidden_dim,
+								   kernel_size=kernel_size,
+								   padding=self.padding,
+								   bias=bias)
 
-		self.conv_c = nn.Conv2d(in_channels=input_dim + hidden_dim,
-							   out_channels=hidden_dim,
-							   kernel_size=kernel_size,
-							   padding=self.padding,
-							   bias=bias)
+			self.conv_c = nn.Conv2d(in_channels=input_dim + hidden_dim,
+								   out_channels=hidden_dim,
+								   kernel_size=kernel_size,
+								   padding=self.padding,
+								   bias=bias)
 
-		self.conv_o = nn.Conv2d(in_channels=input_dim + hidden_dim,
-							   out_channels=hidden_dim,
-							   kernel_size=kernel_size,
-							   padding=self.padding,
-							   bias=bias)
+			self.conv_o = nn.Conv2d(in_channels=input_dim + hidden_dim,
+								   out_channels=hidden_dim,
+								   kernel_size=kernel_size,
+								   padding=self.padding,
+								   bias=bias)
 
-	def forward(self, input_tensor, cur_state):
-		h_cur, c_cur = cur_state
+		def forward(self, input_tensor, cur_state):
+			h_cur, c_cur = cur_state
 
-		combined = torch.cat([input_tensor, h_cur], dim=1)
+			combined = torch.cat([input_tensor, h_cur], dim=1)
 
-		i = torch.sigmoid(self.conv_i(combined))
-		f = torch.sigmoid(self.conv_f(combined))
-		c = torch.tanh(self.conv_c(combined))
-		o = torch.sigmoid(self.conv_o(combined))
+			i = torch.sigmoid(self.conv_i(combined))
+			f = torch.sigmoid(self.conv_f(combined))
+			c = torch.tanh(self.conv_c(combined))
+			o = torch.sigmoid(self.conv_o(combined))
 
-		c_next = f * c_cur + i * c
-		h_next = o * torch.tanh(c_next)
+			c_next = f * c_cur + i * c
+			h_next = o * torch.tanh(c_next)
 
-		return h_next, c_next
+			return h_next, c_next
 
-	def init_hidden(self, batch_size, image_size):
-		height, width = image_size
-		return (torch.zeros(batch_size, self.hidden_dim, height, width),
-				torch.zeros(batch_size, self.hidden_dim, height, width))
+		def init_hidden(self, batch_size, image_size):
+			height, width = image_size
+			return (torch.zeros(batch_size, self.hidden_dim, height, width),
+					torch.zeros(batch_size, self.hidden_dim, height, width))
+else:
+	ConvLSTM = None
 
 
 class TemporalAnalyzer:
@@ -152,15 +156,19 @@ class TemporalAnalyzer:
 						self.model = None
 				else:
 					# Fallback to legacy ConvLSTM style model
-					try:
-						self.model = AccidentConvLSTM()
-						self.model.load_state_dict(loaded)
-						self.model.to(self.device)
-						self.model.eval()
-						logger.info("Temporal model loaded successfully")
-					except Exception as e:
-						logger.error(f"Failed to load temporal model: {e}")
+					if not TORCH_AVAILABLE or AccidentConvLSTM is None:
+						logger.warning("PyTorch not available. Cannot load ConvLSTM model.")
 						self.model = None
+					else:
+						try:
+							self.model = AccidentConvLSTM()
+							self.model.load_state_dict(loaded)
+							self.model.to(self.device)
+							self.model.eval()
+							logger.info("Temporal model loaded successfully")
+						except Exception as e:
+							logger.error(f"Failed to load temporal model: {e}")
+							self.model = None
 			else:
 				logger.warning(f"Temporal model not found at {self.model_path}.")
 				# If a model URL is provided via TEMPORAL_MODEL_URL, attempt download and load
@@ -202,14 +210,19 @@ class TemporalAnalyzer:
 								logger.error(f"Failed to download temporal model: {e}")
 						if success:
 							# Try to load model after download
-							try:
-								self.model = AccidentConvLSTM()
-								self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
-								self.model.to(self.device)
-								self.model.eval()
-								logger.info("Temporal model downloaded and loaded successfully")
-							except Exception as e:
-								logger.error(f"Failed to load downloaded temporal model: {e}")
+							if not TORCH_AVAILABLE or AccidentConvLSTM is None:
+								logger.warning("PyTorch not available. Cannot load ConvLSTM model.")
+								self.model = None
+							else:
+								try:
+									self.model = AccidentConvLSTM()
+									self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
+									self.model.to(self.device)
+									self.model.eval()
+									logger.info("Temporal model downloaded and loaded successfully")
+								except Exception as e:
+									logger.error(f"Failed to load downloaded temporal model: {e}")
+									self.model = None
 					except Exception as e:
 						logger.error(f"Error while attempting to download temporal model: {e}")
 						self.model = None
@@ -307,27 +320,28 @@ class TemporalAnalyzer:
 			logger.error(f"Error in model-based analysis: {e}")
 			return self._rule_based_analysis(frames, detections_list)
 
+	def _preprocess_frames_for_x3d(self, frames: List[np.ndarray]) -> 'torch.Tensor':
+		"""Convert list of frames (H,W,3) to (1,3,T,H,W) float tensor normalized to [0,1]"""
+		import torch
 
-def _preprocess_frames_for_x3d(self, frames: List[np.ndarray]) -> 'torch.Tensor':
-	"""Convert list of frames (H,W,3) to (1,3,T,H,W) float tensor normalized to [0,1]"""
-	import torch
+		# Resize to 112x112 and stack
+		processed = []
+		for f in frames:
+			# convert BGR->RGB
+			img = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+			img = cv2.resize(img, (112, 112))
+			img = img.astype('float32') / 255.0
+			# HWC -> CHW
+			img = img.transpose(2, 0, 1)
+			processed.append(img)
 
-	# Resize to 112x112 and stack
-	processed = []
-	for f in frames:
-		# convert BGR->RGB
-		img = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-		img = cv2.resize(img, (112, 112))
-		img = img.astype('float32') / 255.0
-		# HWC -> CHW
-		img = img.transpose(2, 0, 1)
-		processed.append(img)
+		arr = np.stack(processed, axis=1)  # shape (C, T, H, W)
+		arr = np.expand_dims(arr, axis=0)  # (1, C, T, H, W)
+		return torch.from_numpy(arr)
 
-	arr = np.stack(processed, axis=1)  # shape (C, T, H, W)
-	arr = np.expand_dims(arr, axis=0)  # (1, C, T, H, W)
-	return torch.from_numpy(arr)
 	def _rule_based_analysis(self, frames: List[np.ndarray], 
-						detections_list: List[List]) -> AccidentPrediction:		"""
+						detections_list: List[List]) -> AccidentPrediction:
+		"""
 		Rule-based accident detection using multiple heuristics
 		"""
 		try:
@@ -646,51 +660,55 @@ def _preprocess_frames_for_x3d(self, frames: List[np.ndarray]) -> 'torch.Tensor'
 		}
 
 
-class AccidentConvLSTM(nn.Module):
-	"""
-	ConvLSTM model for accident detection
-	A compact architecture: per-frame encoder -> ConvLSTM -> global pool -> linear
-	"""
-	def __init__(self, input_channels: int = 1, hidden_dim: int = 16):
-		super(AccidentConvLSTM, self).__init__()
-		self.encoder = nn.Sequential(
-			nn.Conv2d(input_channels, 8, kernel_size=3, padding=1),
-			nn.ReLU(),
-			nn.MaxPool2d(2),
-			nn.Conv2d(8, 16, kernel_size=3, padding=1),
-			nn.ReLU(),
-			nn.MaxPool2d(2)
-		)
+if TORCH_AVAILABLE:
+	class AccidentConvLSTM(nn.Module):
+		"""
+		ConvLSTM model for accident detection
+		A compact architecture: per-frame encoder -> ConvLSTM -> global pool -> linear
+		"""
+		def __init__(self, input_channels: int = 1, hidden_dim: int = 16):
+			super(AccidentConvLSTM, self).__init__()
+			self.encoder = nn.Sequential(
+				nn.Conv2d(input_channels, 8, kernel_size=3, padding=1),
+				nn.ReLU(),
+				nn.MaxPool2d(2),
+				nn.Conv2d(8, 16, kernel_size=3, padding=1),
+				nn.ReLU(),
+				nn.MaxPool2d(2)
+			)
 
-		# ConvLSTM will operate on encoded features
-		self.convlstm = ConvLSTM(input_dim=16, hidden_dim=hidden_dim, kernel_size=3)
+			# ConvLSTM will operate on encoded features
+			self.convlstm = ConvLSTM(input_dim=16, hidden_dim=hidden_dim, kernel_size=3)
 
-		# Final classifier
-		self.classifier = nn.Sequential(
-			nn.AdaptiveAvgPool2d((1, 1)),
-			nn.Flatten(),
-			nn.Linear(hidden_dim, 1)
-		)
+			# Final classifier
+			self.classifier = nn.Sequential(
+				nn.AdaptiveAvgPool2d((1, 1)),
+				nn.Flatten(),
+				nn.Linear(hidden_dim, 1)
+			)
 
-	def forward(self, x: 'torch.Tensor') -> 'torch.Tensor':
-		# x shape: [B, seq_len, 1, H, W]
-		B, seq_len, c, H, W = x.shape
-		# Merge batch and seq to encode frames
-		x = x.view(B * seq_len, c, H, W)
-		features = self.encoder(x)  # [B*seq, C, H', W']
-		_, C, Hf, Wf = features.shape
-		features = features.view(B, seq_len, C, Hf, Wf)
+		def forward(self, x: 'torch.Tensor') -> 'torch.Tensor':
+			# x shape: [B, seq_len, 1, H, W]
+			B, seq_len, c, H, W = x.shape
+			# Merge batch and seq to encode frames
+			x = x.view(B * seq_len, c, H, W)
+			features = self.encoder(x)  # [B*seq, C, H', W']
+			_, C, Hf, Wf = features.shape
+			features = features.view(B, seq_len, C, Hf, Wf)
 
-		# Initialize hidden state
-		h, cstate = self.convlstm.init_hidden(B, (Hf, Wf))
-		h = h.to(features.device)
-		cstate = cstate.to(features.device)
+			# Initialize hidden state
+			h, cstate = self.convlstm.init_hidden(B, (Hf, Wf))
+			h = h.to(features.device)
+			cstate = cstate.to(features.device)
 
-		# Run ConvLSTM over sequence
-		for t in range(seq_len):
-			input_t = features[:, t, :, :, :]
-			h, cstate = self.convlstm(input_t, (h, cstate))
+			# Run ConvLSTM over sequence
+			for t in range(seq_len):
+				input_t = features[:, t, :, :, :]
+				h, cstate = self.convlstm(input_t, (h, cstate))
 
-		out = self.classifier(h)
-		return out.squeeze(1)
+			out = self.classifier(h)
+			return out.squeeze(1)
+else:
+	# Dummy class when PyTorch is not available
+	AccidentConvLSTM = None
 

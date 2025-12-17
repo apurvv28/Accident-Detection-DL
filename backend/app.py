@@ -1,9 +1,17 @@
 """Main Flask application for Accident Detection System."""
 import os
+import sys
 import yaml
+from pathlib import Path
 from flask import Flask, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+# Add parent directory to Python path to allow imports when running from backend/
+backend_dir = Path(__file__).parent
+parent_dir = backend_dir.parent
+if str(parent_dir) not in sys.path:
+	sys.path.insert(0, str(parent_dir))
 
 load_dotenv()
 

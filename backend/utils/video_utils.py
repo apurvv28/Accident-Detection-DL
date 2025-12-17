@@ -6,7 +6,7 @@ import cv2
 import tempfile
 import numpy as np
 from typing import Iterator, Tuple, Optional
-from moviepy import VideoFileClip
+from moviepy.editor import VideoFileClip
 from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)

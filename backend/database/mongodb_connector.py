@@ -2,6 +2,7 @@
 MongoDB Connection Manager
 """
 import os
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import pymongo
@@ -764,6 +765,513 @@ class MongoDBConnector:
             return result
         except Exception as e:
             logger.error(f"Failed to get peak hours: {e}")
+            return []
+
+    def get_accident_categories(self, start_date: datetime) -> List[Dict]:
+        """Get accident categories/severity distribution"""
+        try:
+            pipeline = [
+                {
+                    '$match': {
+                        'is_accident': True,
+                        'timestamp': {'$gte': start_date}
+                    }
+                },
+                {
+                    '$group': {
+                        '_id': '$severity',
+                        'count': {'$sum': 1},
+                        'avg_confidence': {'$avg': '$confidence'}
+                    }
+                },
+                {
+                    '$project': {
+                        '_id': 0,
+                        'severity': '$_id',
+                        'count': 1,
+                        'avg_confidence': {'$round': ['$avg_confidence', 2]}
+                    }
+                },
+                {
+                    '$sort': {'count': -1}
+                }
+            ]
+            
+            result = list(self.db.detections.aggregate(pipeline))
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get accident categories: {e}")
+            return []
+
+    def get_alert_success_timeline(self, start_date: datetime) -> List[Dict]:
+        """Get alert success rate over time"""
+        try:
+            pipeline = [
+                {
+                    '$match': {
+                        'timestamp': {'$gte': start_date}
+                    }
+                },
+                {
+                    '$group': {
+                        '_id': {
+                            'year': {'$year': '$timestamp'},
+                            'month': {'$month': '$timestamp'},
+                            'day': {'$dayOfMonth': '$timestamp'}
+                        },
+                        'total': {'$sum': 1},
+                        'sent': {
+                            '$sum': {
+                                '$cond': [
+                                    {'$eq': ['$status', 'sent']},
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
+                        'failed': {
+                            '$sum': {
+                                '$cond': [
+                                    {'$eq': ['$status', 'failed']},
+                                    1,
+                                    0
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    '$project': {
+                        '_id': 0,
+                        'date': {
+                            '$dateFromParts': {
+                                'year': '$_id.year',
+                                'month': '$_id.month',
+                                'day': '$_id.day'
+                            }
+                        },
+                        'total': 1,
+                        'sent': 1,
+                        'failed': 1,
+                        'success_rate': {
+                            '$cond': [
+                                {'$eq': ['$total', 0]},
+                                0,
+                                {'$multiply': [
+                                    {'$divide': ['$sent', '$total']},
+                                    100
+                                ]}
+                            ]
+                        }
+                    }
+                },
+                {
+                    '$sort': {'date': 1}
+                }
+            ]
+            
+            result = list(self.db.alerts.aggregate(pipeline))
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get alert success timeline: {e}")
+            return []
+
+    def get_recent_detections_all(self, start_date: datetime, limit: int = 20) -> List[Dict]:
+        """Get recent detections from all cameras"""
+        try:
+            query = {
+                'timestamp': {'$gte': start_date}
+            }
+            
+            detections = list(self.db.detections.find(query)
+                            .sort('timestamp', DESCENDING)
+                            .limit(limit))
+            
+            for detection in detections:
+                detection['_id'] = str(detection['_id'])
+            
+            return detections
+        except Exception as e:
+            logger.error(f"Failed to get recent detections: {e}")
+            return []
+
+    def get_accident_clusters(self, start_date: datetime, radius_km: float = 1) -> List[Dict]:
+        """Get accident clusters (high accident zones)"""
+        try:
+            # Get accidents with location
+            accidents = self.get_accidents_with_location(start_date)
+            
+            if not accidents:
+                return []
+            
+            # Simple clustering: group by rounded coordinates
+            clusters = {}
+            for accident in accidents:
+                if 'location' in accident and 'latitude' in accident['location'] and 'longitude' in accident['location']:
+                    lat_val = accident['location']['latitude']
+                    lng_val = accident['location']['longitude']
+                    
+                    # Round to cluster radius (rough approximation)
+                    # 1 degree latitude ≈ 111 km
+                    lat_step = radius_km / 111.0
+                    lat = round(lat_val / lat_step) * lat_step
+                    
+                    # Longitude varies by latitude: 1 degree ≈ 111 km * cos(latitude)
+                    # Use cos(latitude) for accurate longitude step, with minimum to avoid division issues
+                    lat_rad = math.radians(lat_val)
+                    lng_step = radius_km / (111.0 * max(abs(math.cos(lat_rad)), 0.01))
+                    lng = round(lng_val / lng_step) * lng_step
+                    
+                    key = f"{lat:.4f},{lng:.4f}"
+                    if key not in clusters:
+                        clusters[key] = {
+                            'latitude': lat,
+                            'longitude': lng,
+                            'count': 0,
+                            'severity': []
+                        }
+                    
+                    clusters[key]['count'] += 1
+                    if 'severity' in accident:
+                        clusters[key]['severity'].append(accident['severity'])
+            
+            # Convert to list and calculate average severity
+            result = []
+            for cluster in clusters.values():
+                result.append({
+                    'latitude': cluster['latitude'],
+                    'longitude': cluster['longitude'],
+                    'count': cluster['count'],
+                    'radius_km': radius_km,
+                    'avg_severity': max(set(cluster['severity']), key=cluster['severity'].count) if cluster['severity'] else 'medium'
+                })
+            
+            result.sort(key=lambda x: x['count'], reverse=True)
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get accident clusters: {e}")
+            return []
+
+    def get_detections_for_export(self, start_date: datetime) -> List[Dict]:
+        """Get detections for export"""
+        try:
+            query = {
+                'timestamp': {'$gte': start_date}
+            }
+            
+            detections = list(self.db.detections.find(query)
+                            .sort('timestamp', DESCENDING))
+            
+            for detection in detections:
+                detection['_id'] = str(detection['_id'])
+                # Convert datetime to ISO string
+                if 'timestamp' in detection and isinstance(detection['timestamp'], datetime):
+                    detection['timestamp'] = detection['timestamp'].isoformat()
+            
+            return detections
+        except Exception as e:
+            logger.error(f"Failed to get detections for export: {e}")
+            return []
+
+    def get_accidents_for_export(self, start_date: datetime) -> List[Dict]:
+        """Get accidents for export"""
+        try:
+            query = {
+                'is_accident': True,
+                'timestamp': {'$gte': start_date}
+            }
+            
+            accidents = list(self.db.detections.find(query)
+                           .sort('timestamp', DESCENDING))
+            
+            for accident in accidents:
+                accident['_id'] = str(accident['_id'])
+                # Convert datetime to ISO string
+                if 'timestamp' in accident and isinstance(accident['timestamp'], datetime):
+                    accident['timestamp'] = accident['timestamp'].isoformat()
+            
+            return accidents
+        except Exception as e:
+            logger.error(f"Failed to get accidents for export: {e}")
+            return []
+
+    def get_alerts_for_export(self, start_date: datetime) -> List[Dict]:
+        """Get alerts for export"""
+        try:
+            query = {
+                'timestamp': {'$gte': start_date}
+            }
+            
+            alerts = list(self.db.alerts.find(query)
+                         .sort('timestamp', DESCENDING))
+            
+            for alert in alerts:
+                alert['_id'] = str(alert['_id'])
+                # Convert datetime to ISO string
+                if 'timestamp' in alert and isinstance(alert['timestamp'], datetime):
+                    alert['timestamp'] = alert['timestamp'].isoformat()
+                if 'sent_at' in alert and isinstance(alert['sent_at'], datetime):
+                    alert['sent_at'] = alert['sent_at'].isoformat()
+                if 'last_attempt' in alert and isinstance(alert['last_attempt'], datetime):
+                    alert['last_attempt'] = alert['last_attempt'].isoformat()
+            
+            return alerts
+        except Exception as e:
+            logger.error(f"Failed to get alerts for export: {e}")
+            return []
+
+    def get_most_common_vehicles(self, camera_id: str, limit: int = 5) -> List[Dict]:
+        """Get most common vehicle types for a camera"""
+        try:
+            pipeline = [
+                {
+                    '$match': {
+                        'camera_id': camera_id,
+                        'vehicles_involved': {'$exists': True, '$ne': []}
+                    }
+                },
+                {
+                    '$unwind': '$vehicles_involved'
+                },
+                {
+                    '$group': {
+                        '_id': '$vehicles_involved.type',
+                        'count': {'$sum': 1},
+                        'avg_confidence': {'$avg': '$vehicles_involved.confidence'}
+                    }
+                },
+                {
+                    '$sort': {'count': -1}
+                },
+                {
+                    '$limit': limit
+                },
+                {
+                    '$project': {
+                        '_id': 0,
+                        'vehicle_type': '$_id',
+                        'count': 1,
+                        'avg_confidence': {'$round': ['$avg_confidence', 2]}
+                    }
+                }
+            ]
+            
+            result = list(self.db.detections.aggregate(pipeline))
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get most common vehicles: {e}")
+            return []
+
+    def get_videos_paginated(self, page: int = 1, limit: int = 20) -> List[Dict]:
+        """Get videos with pagination"""
+        try:
+            skip = (page - 1) * limit
+            
+            # Get detections that have video_path
+            query = {'video_path': {'$exists': True, '$ne': None}}
+            
+            videos = list(self.db.detections.find(query)
+                        .sort('timestamp', DESCENDING)
+                        .skip(skip)
+                        .limit(limit))
+            
+            # Group by video_path and get unique videos
+            video_dict = {}
+            for detection in videos:
+                video_path = detection.get('video_path')
+                if video_path and video_path not in video_dict:
+                    video_dict[video_path] = {
+                        'video_id': video_path.split('/')[-1] if '/' in video_path else video_path,
+                        'video_path': video_path,
+                        'camera_id': detection.get('camera_id'),
+                        'first_detection': detection.get('timestamp'),
+                        'detections_count': 1,
+                        'accidents_count': 1 if detection.get('is_accident') else 0
+                    }
+                elif video_path in video_dict:
+                    video_dict[video_path]['detections_count'] += 1
+                    if detection.get('is_accident'):
+                        video_dict[video_path]['accidents_count'] += 1
+            
+            result = list(video_dict.values())
+            for video in result:
+                if '_id' in video:
+                    del video['_id']
+                if 'first_detection' in video and isinstance(video['first_detection'], datetime):
+                    video['first_detection'] = video['first_detection'].isoformat()
+            
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get videos: {e}")
+            return []
+
+    def get_videos_count(self) -> int:
+        """Count unique videos"""
+        try:
+            # Count unique video_paths
+            pipeline = [
+                {
+                    '$match': {
+                        'video_path': {'$exists': True, '$ne': None}
+                    }
+                },
+                {
+                    '$group': {
+                        '_id': '$video_path'
+                    }
+                },
+                {
+                    '$count': 'total'
+                }
+            ]
+            
+            result = list(self.db.detections.aggregate(pipeline))
+            return result[0]['total'] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to count videos: {e}")
+            return 0
+
+    def get_alerts_by_type(self) -> Dict:
+        """Get alert counts by type"""
+        try:
+            pipeline = [
+                {
+                    '$group': {
+                        '_id': '$type',
+                        'count': {'$sum': 1},
+                        'sent': {
+                            '$sum': {
+                                '$cond': [
+                                    {'$eq': ['$status', 'sent']},
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
+                        'failed': {
+                            '$sum': {
+                                '$cond': [
+                                    {'$eq': ['$status', 'failed']},
+                                    1,
+                                    0
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    '$project': {
+                        '_id': 0,
+                        'type': '$_id',
+                        'count': 1,
+                        'sent': 1,
+                        'failed': 1
+                    }
+                }
+            ]
+            
+            result = list(self.db.alerts.aggregate(pipeline))
+            return {item['type']: item for item in result}
+        except Exception as e:
+            logger.error(f"Failed to get alerts by type: {e}")
+            return {}
+
+    def get_alert_success_rate(self) -> float:
+        """Get overall alert success rate"""
+        try:
+            pipeline = [
+                {
+                    '$group': {
+                        '_id': None,
+                        'total': {'$sum': 1},
+                        'sent': {
+                            '$sum': {
+                                '$cond': [
+                                    {'$eq': ['$status', 'sent']},
+                                    1,
+                                    0
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    '$project': {
+                        '_id': 0,
+                        'success_rate': {
+                            '$cond': [
+                                {'$eq': ['$total', 0]},
+                                0,
+                                {'$multiply': [
+                                    {'$divide': ['$sent', '$total']},
+                                    100
+                                ]}
+                            ]
+                        }
+                    }
+                }
+            ]
+            
+            result = list(self.db.alerts.aggregate(pipeline))
+            return round(result[0]['success_rate'], 2) if result else 0.0
+        except Exception as e:
+            logger.error(f"Failed to get alert success rate: {e}")
+            return 0.0
+
+    def get_most_active_cameras_for_alerts(self, limit: int = 5) -> List[Dict]:
+        """Get cameras with most alerts"""
+        try:
+            pipeline = [
+                {
+                    '$match': {
+                        'camera_id': {'$exists': True, '$ne': None}
+                    }
+                },
+                {
+                    '$group': {
+                        '_id': '$camera_id',
+                        'total_alerts': {'$sum': 1},
+                        'sent': {
+                            '$sum': {
+                                '$cond': [
+                                    {'$eq': ['$status', 'sent']},
+                                    1,
+                                    0
+                                ]
+                            }
+                        }
+                    }
+                },
+                {
+                    '$sort': {'total_alerts': -1}
+                },
+                {
+                    '$limit': limit
+                },
+                {
+                    '$project': {
+                        '_id': 0,
+                        'camera_id': '$_id',
+                        'total_alerts': 1,
+                        'sent': 1,
+                        'success_rate': {
+                            '$cond': [
+                                {'$eq': ['$total_alerts', 0]},
+                                0,
+                                {'$multiply': [
+                                    {'$divide': ['$sent', '$total_alerts']},
+                                    100
+                                ]}
+                            ]
+                        }
+                    }
+                }
+            ]
+            
+            result = list(self.db.alerts.aggregate(pipeline))
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get most active cameras for alerts: {e}")
             return []
     
     # ========== CLEANUP OPERATIONS ==========
