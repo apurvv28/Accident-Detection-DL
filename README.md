@@ -45,15 +45,15 @@ A comprehensive AI-powered system for real-time accident detection from CCTV cam
 ## 🛠️ Technology Stack
 
 ### Backend
-- **Python 3.9+** - Core runtime
+- **Python 3.10+** - Core runtime
 - **Flask** - Web framework
 - **PyTorch** - Deep learning framework
-- **YOLOv8** - Object detection model
+- **YOLO (v11)** - Object detection (configurable via `YOLO_MODEL_PATH`)
 - **OpenCV** - Computer vision library
 - **MongoDB** - Database
 - **Socket.IO** - Real-time communication
 - **Twilio** - SMS/Voice alerts
-- **Google TTS** - Text-to-speech
+- **TTS (gTTS / pyttsx3)** - Text-to-speech options (engine configurable via `TTS_ENGINE`) 
 
 ### Frontend
 - **React 18** - UI framework
@@ -71,9 +71,11 @@ A comprehensive AI-powered system for real-time accident detection from CCTV cam
 ## 📋 Prerequisites
 
 - **Docker & Docker Compose** (recommended)
-- **Python 3.9+** (for local development)
+- **Python 3.10+** (for local development)
 - **Node.js 16+** (for frontend development)
 - **MongoDB** (if not using Docker)
+
+Note: The backend scripts and models assume Python 3.10+ for full compatibility.
 
 ## 🚀 Quick Start
 
@@ -209,10 +211,17 @@ FLASK_ENV=development
 SECRET_KEY=your-secret-key
 
 # AI Model Settings
+# Path to object detection model (supports YOLOv8 or YOLOv11)
+YOLO_MODEL_PATH=static/models/yolov8n.pt
+IOU_THRESHOLD=0.45
 MIN_CONFIDENCE=0.75
 PROCESS_FPS=2
 TARGET_FPS=10
 FRAME_SKIP=3
+
+# Temporal model (for accident sequence analysis)
+TEMPORAL_MODEL_PATH=static/models/temporal_accident.pth
+TEMPORAL_MODEL_URL=      # optional: URL to download the temporal model
 
 # Default Location
 DEFAULT_LATITUDE=28.6139
@@ -224,6 +233,7 @@ ENABLE_VOICE_ALERTS=false
 TWILIO_ACCOUNT_SID=your-twilio-sid
 TWILIO_AUTH_TOKEN=your-twilio-token
 TWILIO_PHONE_NUMBER=your-twilio-number
+ALERT_PHONE_NUMBERS=+1234567890  # comma separated
 
 # TTS Settings
 TTS_ENGINE=gtts
@@ -252,23 +262,45 @@ GENERATE_SOURCEMAP=false
 - `GET /api/v1/cameras/{id}` - Get camera details
 - `PUT /api/v1/cameras/{id}` - Update camera
 - `DELETE /api/v1/cameras/{id}` - Delete camera
+- `POST /api/v1/cameras/{id}/test` - Test camera connection / stream
+- `GET /api/v1/cameras/{id}/detections` - Get detections for camera
+- `GET /api/v1/cameras/{id}/stats` - Camera statistics
+
+#### Video
+- `POST /api/v1/video/upload` - Upload a video for analysis (multipart/form-data)
+- `GET /api/v1/video/list` - List uploaded videos
+- `GET /api/v1/video/{video_id}/status` - Check processing status
 
 #### Inference
-- `POST /api/v1/inference/start` - Start monitoring
+- `POST /api/v1/inference/start` - Start monitoring (JSON: `stream_url`, `camera_id`)
 - `POST /api/v1/inference/stop/{camera_id}` - Stop monitoring
 - `GET /api/v1/inference/status` - Get status
-- `GET /api/v1/detections` - List detections
+- `GET /api/v1/detections` - List detections (query: `page`, `limit`, `camera_id`, `is_accident`)
+
+#### Accidents / Detections
+- `GET /api/v1/accidents` - List detected accidents
+- `GET /api/v1/accidents/{id}` - Get accident details
+- `GET /api/v1/accidents/{id}/video` - Download recorded accident clip
+- `GET /api/v1/accidents/{id}/thumbnail` - Get thumbnail image
+- `PATCH /api/v1/accidents/{id}/status` - Update accident status
+- `POST /api/v1/accidents/{id}/alert` - Re-send or trigger alerts for an accident
+- `GET /api/v1/accidents/stats` - Aggregated accident statistics
 
 #### Alerts
-- `GET /api/v1/alert/config` - Get configuration
-- `PUT /api/v1/alert/config` - Update configuration
-- `POST /api/v1/alert/test` - Test alerts
-- `GET /api/v1/alert/history` - Alert history
+- `GET /api/v1/alert/config` - Get alert configuration
+- `PUT /api/v1/alert/config` - Update alert configuration
+- `POST /api/v1/alert/test` - Test alert sending
+- `GET /api/v1/alert/history` - List sent alerts (pagination)
+- `POST /api/v1/alert/resend/{alert_id}` - Re-send a past alert
+- `GET /api/v1/alert/stats` - Alert delivery statistics
 
 #### System
 - `GET /api/v1/system/health` - System health
 - `GET /api/v1/system/logs` - System logs
 - `GET /api/v1/system/version` - Version info
+- `GET /api/v1/system/config` - Current runtime configuration (read-only)
+
+> WebSocket: `ws://localhost:5000` (Socket.IO) — used for realtime updates (detection events, status, alerts)
 
 ## 🔒 Security
 

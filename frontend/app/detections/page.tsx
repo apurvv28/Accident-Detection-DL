@@ -80,6 +80,12 @@ export default function DetectionsPage() {
     setFilters({ ...filters, [key]: value, page: 1 });
   };
 
+  // Helper function to safely get severity color
+  const getSafeSeverityColor = (severity?: string) => {
+    if (!severity) return 'bg-gray-100 text-gray-800';
+    return getSeverityColor(String(severity));
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -201,8 +207,8 @@ export default function DetectionsPage() {
                     </td>
                     <td className="py-3 px-4">
                       {detection.severity && (
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getSeverityColor(detection.severity)}`}>
-                          {detection.severity}
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getSafeSeverityColor(detection.severity)}`}>
+                          {String(detection.severity)}
                         </span>
                       )}
                     </td>
@@ -249,4 +255,3 @@ export default function DetectionsPage() {
     </div>
   );
 }
-

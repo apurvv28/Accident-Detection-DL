@@ -19,9 +19,9 @@ const navigation = [
   { name: 'Detections', href: '/detections', icon: Activity },
   { name: 'Accident Videos', href: '/accidents', icon: Activity },
   { name: 'Video Upload', href: '/upload', icon: Upload },
-  { name: 'Alerts', href: '/alerts', icon: AlertTriangle },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { name: 'Settings', href: '/settings', icon: Settings },
+  // { name: 'Alerts', href: '/alerts', icon: AlertTriangle },
+  // { name: 'Analytics', href: '/analytics', icon: BarChart3 },
+  // { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export const Sidebar = () => {
