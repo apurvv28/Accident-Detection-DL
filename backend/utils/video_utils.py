@@ -4,8 +4,11 @@ Video utilities: frame extraction, format conversion, basic preprocessing
 import os
 import cv2
 import tempfile
+import time
 import numpy as np
-from typing import Iterator, Tuple, Optional
+from typing import Iterator, Tuple, Optional, List
+from collections import deque
+
 # moviepy v2 may not expose `editor` as a top-level module; import directly with a fallback
 try:
 	from moviepy.editor import VideoFileClip
@@ -77,6 +80,62 @@ def preprocess_frame(frame: np.ndarray, target_size: Tuple[int, int] = (640, 360
 	normalized = rgb.astype('float32') / 255.0
 	return normalized
 
+
+def save_frames_as_video(frames: List[np.ndarray], output_path: str, fps: int = 30) -> Optional[str]:
+    """
+    Save a list of frames as a video file.
+    
+    Args:
+        frames: List of numpy arrays (BGR format)
+        output_path: Output video file path
+        fps: Frames per second for output video
+        
+    Returns:
+        str: Path to saved video file or None if failed
+    """
+    if not frames:
+        logger.warning("No frames to save")
+        return None
+        
+    try:
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Get frame dimensions
+        height, width = frames[0].shape[:2]
+        
+        # Initialize video writer (try browser-friendly codecs first)
+        writer = None
+        for fourcc_str in ('avc1', 'H264', 'X264', 'mp4v'):
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+                candidate = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                if candidate.isOpened():
+                    writer = candidate
+                    break
+                candidate.release()
+            except Exception:
+                try:
+                    candidate.release()
+                except Exception:
+                    pass
+                continue
+        
+        if writer is None or not writer.isOpened():
+            logger.error(f"Could not open video writer for {output_path}")
+            return None
+            
+        # Write frames
+        for frame in frames:
+            writer.write(frame)
+            
+        writer.release()
+        logger.info(f"Saved {len(frames)} frames to {output_path}")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Error saving video: {e}")
+        return None
 
 def save_annotated_clip(frames: list, detections_per_frame: Optional[list] = None, output_path: str = None, fps: int = 5) -> Optional[str]:
 	"""Save a short MP4 clip with bounding boxes/labels drawn on frames.

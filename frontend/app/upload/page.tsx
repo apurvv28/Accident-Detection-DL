@@ -149,7 +149,7 @@ export default function UploadPage() {
             <div className="space-y-3">
               <div className={`flex items-center space-x-2 p-4 rounded-lg ${
                 processingStatus.processing_status === 'completed'
-                  ? 'bg-success-50 text-success-800'
+                  ? (processingStatus.accident_detected ? 'bg-red-50 text-red-800' : 'bg-success-50 text-success-800')
                   : 'bg-blue-50 text-blue-800'
               }`}>
                 {processingStatus.processing_status === 'completed' ? (
@@ -160,10 +160,10 @@ export default function UploadPage() {
                 <div className="flex-1">
                   <span className="font-medium">
                     {processingStatus.processing_status === 'completed'
-                      ? 'Processing completed!'
+                      ? (processingStatus.accident_detected ? 'Accident detected!' : 'No accident detected')
                       : 'Processing in progress...'}
                   </span>
-                  {processingStatus.accidents_detected !== undefined && (
+                  {processingStatus.accident_detected && processingStatus.accidents_detected !== undefined && (
                     <p className="text-sm mt-1">
                       Accidents detected: {processingStatus.accidents_detected}
                     </p>

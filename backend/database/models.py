@@ -18,7 +18,6 @@ class AlertType(str, Enum):
     VOICE = "voice"
     TTS = "tts"
     SMS = "sms"
-    EMAIL = "email"
     TEST = "test"
 
 class DetectionSeverity(str, Enum):
@@ -188,7 +187,7 @@ class AlertDocument(BaseModel):
     tts_audio_path: Optional[str] = Field(None, description="Path to TTS audio file")
     
     # Recipients
-    recipients: Dict[str, List[str]] = Field(default_factory=dict, description="Recipient information")
+    recipients: Dict[str, List[str]] = Field(default_factory=dict, description="Recipient information (phone_numbers only)")
     
     # Delivery information
     delivery_attempts: int = Field(0, ge=0, description="Number of delivery attempts")
@@ -214,8 +213,7 @@ class AlertDocument(BaseModel):
                 "camera_id": "cam_001",
                 "message": "Accident detected at latitude 28.6140, longitude 77.2091",
                 "recipients": {
-                    "phone_numbers": ["+919876543210"],
-                    "emails": ["emergency@traffic.com"]
+                    "phone_numbers": ["+919876543210"]
                 },
                 "delivery_attempts": 1,
                 "twilio_call_sid": "CA1234567890abcdef"

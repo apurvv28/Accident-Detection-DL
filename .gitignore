@@ -154,3 +154,8 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+# Runtime-generated files (DO NOT COMMIT)
+backend/uploads/
+backend/uploads/processed/
+backend/static/accidents/

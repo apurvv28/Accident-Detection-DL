@@ -225,8 +225,7 @@ def seed_database():
                         "camera_id": camera_id,
                         "message": f"Accident detected at {detection_data['location']['latitude']:.6f}, {detection_data['location']['longitude']:.6f}",
                         "recipients": {
-                            "phone_numbers": ["+919876543210", "+919876543211"],
-                            "emails": ["emergency@traffic.com"]
+                            "phone_numbers": ["+919876543210", "+919876543211"]
                         },
                         "delivery_attempts": 1,
                         "timestamp": timestamp + timedelta(seconds=30),

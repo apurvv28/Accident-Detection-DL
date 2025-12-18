@@ -161,8 +161,7 @@ def manage_alert_config():
                 'min_confidence': current_app.config.get('MIN_CONFIDENCE', 0.75),
                 'cooldown_minutes': current_app.config.get('ALERT_COOLDOWN_MINUTES', 5),
                 'recipients': {
-                    'phone_numbers': current_app.config.get('ALERT_PHONE_NUMBERS', '').split(','),
-                    'emails': current_app.config.get('ALERT_EMAILS', '').split(',')
+                    'phone_numbers': current_app.config.get('ALERT_PHONE_NUMBERS', '').split(',')
                 },
                 'tts_settings': {
                     'engine': current_app.config.get('TTS_ENGINE', 'gtts'),

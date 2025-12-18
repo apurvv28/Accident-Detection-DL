@@ -3,7 +3,7 @@ Accident Detection API Endpoints
 """
 import os
 from datetime import datetime
-from flask import request, jsonify, send_file, current_app
+from flask import request, jsonify, send_file, current_app, Response
 from werkzeug.utils import secure_filename
 
 from . import api_v1
@@ -201,19 +201,67 @@ def get_accident_video(accident_id):
             }), 404
         
         video_path = accident.get('accident_video_path')
+
+        # Resolve relative paths against the Flask app root (backend/)
+        if video_path and not os.path.isabs(video_path):
+            video_path = os.path.join(current_app.root_path, video_path)
         
         if not video_path or not os.path.exists(video_path):
             return jsonify({
                 'status': 'error',
                 'message': 'Video not found'
             }), 404
-        
-        return send_file(
+
+        file_size = os.path.getsize(video_path)
+        range_header = request.headers.get('Range')
+
+        # Support Range requests for browser video streaming
+        if range_header:
+            try:
+                units, rng = range_header.split('=', 1)
+                if units.strip() != 'bytes':
+                    raise ValueError('Only bytes ranges are supported')
+
+                start_str, end_str = rng.split('-', 1)
+                # RFC 7233 formats:
+                # - bytes=START-END
+                # - bytes=START-
+                # - bytes=-SUFFIX_LENGTH
+                if start_str == '' and end_str:
+                    suffix_len = int(end_str)
+                    start = max(file_size - suffix_len, 0)
+                    end = file_size - 1
+                else:
+                    start = int(start_str) if start_str else 0
+                    end = int(end_str) if end_str else file_size - 1
+
+                end = min(end, file_size - 1)
+                if start > end:
+                    start = 0
+
+                length = end - start + 1
+                with open(video_path, 'rb') as f:
+                    f.seek(start)
+                    data = f.read(length)
+
+                resp = Response(data, status=206, mimetype='video/mp4', direct_passthrough=True)
+                resp.headers.add('Content-Range', f'bytes {start}-{end}/{file_size}')
+                resp.headers.add('Accept-Ranges', 'bytes')
+                resp.headers.add('Content-Length', str(length))
+                resp.headers.add('Cache-Control', 'no-store')
+                return resp
+            except Exception as e:
+                logger.warning(f"Invalid Range header '{range_header}': {e}")
+
+        resp = send_file(
             video_path,
             mimetype='video/mp4',
             as_attachment=False,
             download_name=f"accident_{accident_id}.mp4"
         )
+        resp.headers.add('Accept-Ranges', 'bytes')
+        resp.headers.add('Cache-Control', 'no-store')
+        return resp
         
     except Exception as e:
         logger.error(f"Error getting accident video {accident_id}: {e}")
