@@ -11,7 +11,7 @@ pymongo
 dnspython
 
 # Computer Vision & AI
-ultralytics  # YOLOv8
+ultralytics>=8.3.0  # YOLOv11 support
 torch
 torchvision
 torchaudio  # Optional for audio processing
@@ -20,6 +20,9 @@ numpy
 Pillow
 scikit-learn
 scipy
+
+# Object Tracking
+deep-sort-realtime
 
 # Video Processing
 imageio

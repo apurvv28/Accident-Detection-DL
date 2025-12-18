@@ -89,7 +89,18 @@ def system_health():
             health_status['status'] = 'degraded'
             health_status['issues'] = ['Database connection failed']
         
-        return jsonify(health_status), 200
+        # Return in format expected by frontend (flattened structure)
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'status': health_status['status'],
+                'database': services_status['database'],
+                'models_loaded': services_status['ai_model'] == 'available',
+                'system': health_status['system'],
+                'application': health_status['application'],
+                'services': services_status
+            }
+        }), 200
         
     except Exception as e:
         logger.error(f"Health check error: {str(e)}")

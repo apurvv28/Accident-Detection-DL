@@ -51,8 +51,8 @@ def create_app(config_path: str = 'config.yaml') -> Flask:
 	app.register_blueprint(api_v1)
 
 	# Initialize WebSocket
-	socketio.init_app(app, cors_allowed_origins='*')
-
+	socketio.init_app(app, cors_allowed_origins='*', async_mode='threading')
+	
 	# Error handlers
 	@app.errorhandler(404)
 	def not_found(e):
@@ -69,6 +69,50 @@ def create_app(config_path: str = 'config.yaml') -> Flask:
 if __name__ == '__main__':
 	app = create_app()
 	port = int(os.getenv('PORT', 5000))
-	logger.info(f"Starting app on port {port}")
-	socketio.run(app, host='0.0.0.0', port=port)
+	
+	# Check if port is available
+	import socket
+	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	try:
+		sock.bind(('0.0.0.0', port))
+		sock.close()
+	except OSError:
+		logger.error(f"Port {port} is already in use. Please stop the other application or use a different port.")
+		sys.exit(1)
+	
+	logger.info("=" * 60)
+	logger.info(f"Starting Accident Detection System Backend")
+	logger.info(f"Server will be available at http://localhost:{port}")
+	logger.info(f"API endpoints available at http://localhost:{port}/api/v1")
+	logger.info(f"WebSocket available at ws://localhost:{port}")
+	logger.info("=" * 60)
+	logger.info("Press CTRL+C to stop the server")
+	logger.info("")
+	
+	# Print startup confirmation
+	print("\n" + "=" * 60)
+	print(f"✓ Server starting on port {port}")
+	print(f"✓ API: http://localhost:{port}/api/v1")
+	print(f"✓ Health: http://localhost:{port}/api/v1/system/health")
+	print("=" * 60 + "\n")
+	
+	try:
+		# Use threading mode for better compatibility
+		socketio.run(
+			app, 
+			host='0.0.0.0', 
+			port=port, 
+			debug=False, 
+			allow_unsafe_werkzeug=True, 
+			log_output=True,
+			use_reloader=False
+		)
+	except KeyboardInterrupt:
+		logger.info("")
+		logger.info("Server stopped by user")
+	except Exception as e:
+		logger.error(f"Server error: {e}")
+		import traceback
+		logger.error(traceback.format_exc())
+		raise
 

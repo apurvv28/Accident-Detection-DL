@@ -143,32 +143,57 @@ class TemporalAnalyzer:
 			if os.path.exists(self.model_path):
 				logger.info(f"Loading temporal model from: {self.model_path}")
 
-				# Try to load as legacy ConvLSTM checkpoint first
+				# Try to load the checkpoint
 				loaded = torch.load(self.model_path, map_location=self.device)
+
 				# If checkpoint looks like PyTorchVideo format (has 'model_state'), prefer X3D
-				if isinstance(loaded, dict) and 'model_state' in loaded and PYTORCHVIDEO_AVAILABLE:
-					try:
-						logger.info("Detected PyTorchVideo checkpoint — attempting to load X3D model")
-						self.model = X3DAccidentModel(checkpoint_path=self.model_path, device=self.device)
-						logger.info("X3D temporal model loaded successfully")
-					except Exception as e:
-						logger.error(f"Failed to load X3D model: {e}")
-						self.model = None
-				else:
-					# Fallback to legacy ConvLSTM style model
-					if not TORCH_AVAILABLE or AccidentConvLSTM is None:
-						logger.warning("PyTorch not available. Cannot load ConvLSTM model.")
-						self.model = None
-					else:
+				if isinstance(loaded, dict) and 'model_state' in loaded:
+					if PYTORCHVIDEO_AVAILABLE:
 						try:
-							self.model = AccidentConvLSTM()
-							self.model.load_state_dict(loaded)
-							self.model.to(self.device)
-							self.model.eval()
-							logger.info("Temporal model loaded successfully")
+							logger.info("Detected PyTorchVideo checkpoint — attempting to load X3D model")
+							self.model = X3DAccidentModel(checkpoint_path=self.model_path, device=self.device)
+							# Check if model was actually initialized
+							if self.model.backbone is not None and self.model.head is not None:
+								logger.info("X3D temporal model loaded successfully")
+								# Successfully loaded X3D — we're done
+								return
+							else:
+								logger.warning("X3D model initialization incomplete, falling back to rule-based")
+								self.model = None
 						except Exception as e:
-							logger.error(f"Failed to load temporal model: {e}")
+							logger.warning(f"Failed to load X3D model: {e}, using rule-based analysis")
 							self.model = None
+						# Fall back to the contained model_state for legacy ConvLSTM
+						if self.model is None:
+							loaded = loaded.get('model_state', loaded)
+					else:
+						# No PyTorchVideo support available — extract inner state dict for ConvLSTM
+						loaded = loaded.get('model_state', loaded)
+
+				# Fallback to legacy ConvLSTM style model
+				if not TORCH_AVAILABLE or AccidentConvLSTM is None:
+					logger.warning("PyTorch not available. Cannot load ConvLSTM model.")
+					self.model = None
+				else:
+					try:
+						self.model = AccidentConvLSTM()
+						# If loaded is a dict that represents a state_dict, use it
+						if isinstance(loaded, dict):
+							# Some checkpoints store under 'state_dict' or nested keys — try common keys
+							state = loaded.get('state_dict') or loaded.get('model_state') or loaded
+							try:
+								self.model.load_state_dict(state)
+							except Exception:
+								self.model.load_state_dict(state, strict=False)
+						else:
+							# If object isn't a dict, attempt a direct load (best-effort)
+							self.model.load_state_dict(loaded)
+						self.model.to(self.device)
+						self.model.eval()
+						logger.info("Temporal model loaded successfully")
+					except Exception as e:
+						logger.error(f"Failed to load temporal model: {e}")
+						self.model = None
 			else:
 				logger.warning(f"Temporal model not found at {self.model_path}.")
 				# If a model URL is provided via TEMPORAL_MODEL_URL, attempt download and load
@@ -283,8 +308,13 @@ class TemporalAnalyzer:
 		Analyze sequence using loaded model (X3D wrapper or ConvLSTM)
 		"""
 		try:
-			# Preprocess frames for model input (X3D expects (B, C, T, H, W))
-			input_tensor = self._preprocess_frames_for_x3d(frames)
+			# Check if model is X3D or ConvLSTM
+			if hasattr(self.model, 'forward') and 'X3D' in str(type(self.model)):
+				# X3D model - use X3D preprocessing
+				input_tensor = self._preprocess_frames_for_x3d(frames)
+			else:
+				# ConvLSTM model - use grayscale preprocessing
+				input_tensor = self._preprocess_frames(frames)
 
 			with torch.no_grad():
 				input_tensor = input_tensor.to(self.device)
@@ -313,11 +343,14 @@ class TemporalAnalyzer:
 					confidence=confidence,
 					accident_type=accident_type,
 					severity=severity,
-					description='Model-based temporal analysis result (X3D)'
+					description='Model-based temporal analysis result'
 				)
 
 		except Exception as e:
-			logger.error(f"Error in model-based analysis: {e}")
+			# Only log error once per session, then silently fall back to rule-based
+			if not hasattr(self, '_model_error_logged'):
+				logger.warning(f"Model-based analysis unavailable, using rule-based fallback: {e}")
+				self._model_error_logged = True
 			return self._rule_based_analysis(frames, detections_list)
 
 	def _preprocess_frames_for_x3d(self, frames: List[np.ndarray]) -> 'torch.Tensor':

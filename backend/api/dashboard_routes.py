@@ -112,7 +112,15 @@ def dashboard_charts():
         daily_data = db.get_daily_detections(start_date)
         
         # Get camera-wise distribution
-        camera_distribution = db.get_camera_detection_distribution(start_date, limit=10)
+        camera_distribution_raw = db.get_camera_detection_distribution(start_date, limit=10)
+        # Transform to match frontend expectations (name and count for pie chart)
+        camera_distribution = [
+            {
+                'name': item.get('camera_id', 'Unknown'),
+                'count': item.get('detections', 0)
+            }
+            for item in camera_distribution_raw
+        ]
         
         # Get accident types/categories
         accident_categories = db.get_accident_categories(start_date)

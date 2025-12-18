@@ -8,10 +8,20 @@ from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Global connection pool - reuse connections
+_connection_pool = None
+
+def get_db_connection():
+    """Get or create a shared MongoDB connection"""
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = MongoDBConnector()
+    return _connection_pool
+
 
 class DatabaseManager:
     def __init__(self):
-        self.db = MongoDBConnector()
+        self.db = get_db_connection()
 
     # Cameras
     def insert_camera(self, data: Dict) -> str:
@@ -36,11 +46,17 @@ class DatabaseManager:
     def insert_detection(self, data: Dict) -> str:
         return self.db.insert_detection(data)
 
+    def get_detection(self, detection_id: str) -> Optional[Dict]:
+        return self.db.get_detection_by_id(detection_id)
+
     def get_detection_by_video(self, video_id: str) -> Optional[Dict]:
         return self.db.get_detection_by_video(video_id)
 
     def get_detections_paginated(self, query: Dict = None, page: int = 1, limit: int = 50) -> List[Dict]:
         return self.db.get_detections_paginated(query=query, page=page, limit=limit)
+
+    def update_detection(self, detection_id: str, data: Dict) -> bool:
+        return self.db.update_detection(detection_id, data)
 
     def get_detections_count(self, query: Dict = None) -> int:
         return self.db.get_detections_count(query)

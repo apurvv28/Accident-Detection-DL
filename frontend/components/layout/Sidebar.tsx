@@ -17,6 +17,7 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Cameras', href: '/cameras', icon: Camera },
   { name: 'Detections', href: '/detections', icon: Activity },
+  { name: 'Accident Videos', href: '/accidents', icon: Activity },
   { name: 'Video Upload', href: '/upload', icon: Upload },
   { name: 'Alerts', href: '/alerts', icon: AlertTriangle },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },

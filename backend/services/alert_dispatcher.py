@@ -178,9 +178,111 @@ class AlertDispatcher:
 
 	def send_accident_alert(self, detection_data: Dict, camera_id: str):
 		"""Helper to prepare and queue an accident alert using detection data."""
-		message = f"Accident detected at camera {camera_id}. Confidence {detection_data.get('confidence', 0):.2f}. Please check the dashboard."
+		severity = detection_data.get('severity', 0)
+		severity_percent = detection_data.get('severity_percent', severity)
+		confidence = detection_data.get('confidence', 0)
+		
+		message = (
+			f"ACCIDENT ALERT! Detected at camera {camera_id}. "
+			f"Severity: {severity_percent:.1f}%. "
+			f"Confidence: {confidence:.2f}. "
+			f"Please check the dashboard immediately."
+		)
+		
 		recipients = {
 			'phone_numbers': os.getenv('ALERT_PHONE_NUMBERS', '').split(',') if os.getenv('ALERT_PHONE_NUMBERS') else []
 		}
-		self.queue_alert(message, recipients, alert_id=f"acc_{int(time.time())}")
+		
+		alert_id = f"acc_{int(time.time())}"
+		self.queue_alert(message, recipients, alert_id=alert_id)
+		
+		# Emit WebSocket alert
+		self._emit_websocket_alert(detection_data, camera_id)
+		
+		# Auto-alert authorities if severity > 90%
+		if severity_percent >= 90 or severity >= 90:
+			logger.warning(f"AUTO-ALERTING AUTHORITIES - Severity {severity_percent}%")
+			self.send_authority_alert(detection_data, 'police')
+			self.send_authority_alert(detection_data, 'ambulance')
+			self.send_authority_alert(detection_data, 'fire')
+
+	def _emit_websocket_alert(self, detection_data: Dict, camera_id: str):
+		"""Emit real-time WebSocket alert to dashboard"""
+		try:
+			from ..api import socketio
+			
+			severity = detection_data.get('severity', 0)
+			severity_percent = detection_data.get('severity_percent', severity)
+			
+			alert_payload = {
+				'event_id': detection_data.get('detection_id', f"evt_{int(time.time())}"),
+				'type': 'accident',
+				'severity': severity,
+				'severity_percent': severity_percent,
+				'severity_level': self._get_severity_level(severity_percent),
+				'message': f"Accident detected at camera {camera_id}",
+				'camera_id': camera_id,
+				'timestamp': detection_data.get('timestamp', time.strftime('%Y-%m-%dT%H:%M:%SZ')),
+				'requires_action': severity_percent >= 70,
+				'auto_alerted': severity_percent >= 90,
+				'video_url': f"/api/v1/accidents/{detection_data.get('detection_id', '')}/video",
+				'description': detection_data.get('description', ''),
+				'location': detection_data.get('location')
+			}
+			
+			socketio.emit('accident_alert', alert_payload, namespace='/')
+			logger.info(f"WebSocket alert emitted: {alert_payload['event_id']}")
+			
+		except Exception as e:
+			logger.error(f"Failed to emit WebSocket alert: {e}")
+
+	def send_authority_alert(self, detection_data: Dict, authority_type: str):
+		"""Send alert to specific authority (police, ambulance, fire)"""
+		authority_contacts = {
+			'police': os.getenv('POLICE_PHONE', ''),
+			'ambulance': os.getenv('AMBULANCE_PHONE', ''),
+			'fire': os.getenv('FIRE_PHONE', '')
+		}
+		
+		phone = authority_contacts.get(authority_type, '')
+		if not phone:
+			logger.warning(f"No phone number configured for {authority_type}")
+			return
+		
+		severity = detection_data.get('severity_percent', detection_data.get('severity', 0))
+		camera_id = detection_data.get('camera_id', 'Unknown')
+		location = detection_data.get('location', {})
+		
+		if isinstance(location, dict):
+			location_str = location.get('address', 'Unknown location')
+		else:
+			location_str = 'Unknown location'
+		
+		message = (
+			f"EMERGENCY {authority_type.upper()} ALERT! "
+			f"Vehicle accident detected. "
+			f"Severity: {severity:.1f}%. "
+			f"Camera: {camera_id}. "
+			f"Location: {location_str}. "
+			f"Immediate response required."
+		)
+		
+		task = {
+			'message': message,
+			'recipients': {'phone_numbers': [phone], 'use_twilio': True},
+			'alert_id': f"{authority_type}_{int(time.time())}"
+		}
+		self.queue.put(task)
+		logger.info(f"Alert queued for {authority_type}: {phone}")
+
+	def _get_severity_level(self, severity: float) -> str:
+		"""Convert severity percentage to level string"""
+		if severity >= 90:
+			return 'critical'
+		elif severity >= 70:
+			return 'high'
+		elif severity >= 50:
+			return 'medium'
+		else:
+			return 'low'
 

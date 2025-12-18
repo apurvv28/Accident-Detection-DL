@@ -4,6 +4,7 @@ Real-time Inference API Endpoints
 import json
 import threading
 import time
+import os
 from datetime import datetime
 from flask import request, jsonify, current_app
 
@@ -55,6 +56,10 @@ class StreamProcessor:
         cap = cv2.VideoCapture(self.stream_url)
         frame_count = 0
         
+        # rolling buffer for clip creation
+        from collections import deque
+        frame_buffer = deque(maxlen=64)
+
         # Get camera location
         camera_location = self.db.get_camera(self.camera_id)
         if not camera_location:
@@ -69,6 +74,8 @@ class StreamProcessor:
                 break
             
             frame_count += 1
+            frame_buffer.append(frame.copy())
+
             # Process every Nth frame (configurable)
             if frame_count % current_app.config.get('FRAME_SKIP', 3) != 0:
                 continue
@@ -85,17 +92,55 @@ class StreamProcessor:
                     # derive location if possible (use camera location)
                     location = camera_location
 
+                    # create id
+                    detection_id = f"acc_{int(time.time())}_{self.camera_id}"
+
+                    # try to fetch sequence frames/detections
+                    seq_frames = None
+                    seq_dets = None
+                    if getattr(prediction, 'features', None):
+                        seq_frames = prediction.features.get('sequence_frames')
+                        seq_dets = prediction.features.get('sequence_detections')
+
+                    frames_to_save = seq_frames if seq_frames else list(frame_buffer)
+
+                    # Save clip
+                    from ..utils.video_utils import save_annotated_clip
+                    accident_dir = os.path.join(os.getcwd(), 'uploads', 'processed', 'accidents')
+                    os.makedirs(accident_dir, exist_ok=True)
+                    clip_path = os.path.join(accident_dir, f"{detection_id}.mp4")
+                    try:
+                        saved_path = save_annotated_clip(frames_to_save, seq_dets, clip_path, fps=current_app.config.get('TARGET_FPS', 5))
+                    except Exception as e:
+                        logger.error(f"Failed to save annotated clip for stream {self.camera_id}: {e}")
+                        saved_path = None
+
+                    involved_objects = []
+                    try:
+                        if seq_dets:
+                            for frame_dets in seq_dets:
+                                for d in frame_dets:
+                                    cls = getattr(d, 'class_name', getattr(d, 'class', None))
+                                    if cls and cls not in involved_objects:
+                                        involved_objects.append(cls)
+                    except Exception:
+                        pass
+
                     detection_data = {
-                        'detection_id': f"acc_{int(time.time())}_{self.camera_id}",
+                        'detection_id': detection_id,
                         'camera_id': self.camera_id,
                         'timestamp': datetime.now(),
                         'confidence': prediction.confidence,
                         'bbox': None,
                         'vehicles_involved': prediction.features.get('trajectories') if getattr(prediction, 'features', None) else [],
+                        'involved_objects': involved_objects,
                         'location': location,
                         'is_accident': True,
                         'stream_url': self.stream_url,
-                        'frame_number': frame_count
+                        'frame_number': frame_count,
+                        'accident_video_path': saved_path,
+                        'severity': prediction.severity,
+                        'severity_percent': round(float(prediction.confidence) * 100.0, 1) if prediction.confidence is not None else None
                     }
 
                     # Save to database
@@ -363,15 +408,59 @@ def detect_accident():
             response['accident_details'] = {
                 'type': prediction.accident_type,
                 'severity': prediction.severity,
+                'severity_percent': round(float(prediction.confidence) * 100.0, 1) if prediction.confidence is not None else None,
                 'description': prediction.description,
                 'features': prediction.features
             }
 
         return jsonify(response), 200
-        
+
     except Exception as e:
         logger.error(f"Single frame detection error: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Detection failed: {str(e)}'
         }), 500
+
+
+@api_v1.route('/detections/<detection_id>', methods=['GET'])
+def get_detection(detection_id):
+    """Get detection details by id"""
+    try:
+        db = DatabaseManager()
+        det = db.get_detection_by_id(detection_id)
+        if not det:
+            return jsonify({'status': 'error', 'message': 'Detection not found'}), 404
+
+        # If there is an accident_video_path, expose a streaming URL
+        video_url = None
+        if det.get('accident_video_path'):
+            # Provide an API route to stream the file
+            video_url = f"/api/v1/detections/{detection_id}/video"
+
+        det['video_url'] = video_url
+        return jsonify({'status': 'success', 'detection': det}), 200
+    except Exception as e:
+        logger.error(f"Get detection error: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v1.route('/detections/<detection_id>/video', methods=['GET'])
+def get_detection_video(detection_id):
+    """Stream the annotated accident video for a detection"""
+    try:
+        db = DatabaseManager()
+        det = db.get_detection_by_id(detection_id)
+        if not det or not det.get('accident_video_path'):
+            return jsonify({'status': 'error', 'message': 'Video not found for this detection'}), 404
+
+        path = det.get('accident_video_path')
+        if not os.path.isabs(path):
+            # path is stored as absolute by our save helper, but handle relative too
+            path = os.path.join(os.getcwd(), path)
+
+        from flask import send_file
+        return send_file(path, mimetype='video/mp4', conditional=True)
+    except Exception as e:
+        logger.error(f"Get detection video error: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500

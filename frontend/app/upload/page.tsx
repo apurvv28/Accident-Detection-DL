@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Upload as UploadIcon, FileVideo, CheckCircle, RefreshCw, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
+import { formatDate } from '@/lib/utils';
 
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -25,11 +26,15 @@ export default function UploadPage() {
       const interval = setInterval(async () => {
         try {
           const statusRes = await videoApi.getStatus(videoId);
-          setProcessingStatus(statusRes.data);
+          // API returns { status, data: { processing_status, ... } }
+          const statusData = statusRes.data?.data ?? statusRes.data;
+          setProcessingStatus(statusData);
           
-          // Refresh detections if processing is complete
-          if (statusRes.data.processing_status === 'completed') {
+          // Refresh detections and stop polling when processing is complete
+          if (statusData.processing_status === 'completed') {
             fetchRecentDetections();
+            // stop further polling for this video
+            setVideoId(null);
           }
         } catch (error) {
           console.error('Failed to check status');
@@ -213,7 +218,7 @@ export default function UploadPage() {
                         {detection.is_accident ? 'Accident Detected' : 'Detection'}
                       </p>
                       <p className="text-xs text-gray-600">
-                        {new Date(detection.timestamp).toLocaleString()}
+                        {formatDate(detection.timestamp)}
                       </p>
                     </div>
                     <div className="text-right">

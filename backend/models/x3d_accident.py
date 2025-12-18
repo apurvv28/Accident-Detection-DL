@@ -1,6 +1,7 @@
 """Wrapper for X3D from PyTorchVideo to be used as a lightweight accident model head."""
 from __future__ import annotations
 import logging
+import os
 from typing import Optional
 
 import torch
@@ -35,7 +36,7 @@ class X3DAccidentModel(nn.Module):
             raise
 
         # If checkpoint path available, try to load model_state
-        if checkpoint_path and torch.exists(checkpoint_path):
+        if checkpoint_path and os.path.exists(checkpoint_path):
             try:
                 ck = torch.load(checkpoint_path, map_location=self.device)
                 model_state = None
@@ -55,8 +56,10 @@ class X3DAccidentModel(nn.Module):
         try:
             self._build_head_from_dummy()
         except Exception as e:
-            logger.error("Failed to build head from backbone: %s", e)
-            raise
+            logger.warning("Failed to build head from backbone: %s", e)
+            logger.warning("X3D model will not be available - falling back to rule-based analysis")
+            self.backbone = None
+            self.head = None
 
     def _build_head_from_dummy(self):
         # X3D expects input shape (B, C, T, H, W). Use a small T/H/W for probing.
@@ -71,6 +74,8 @@ class X3DAccidentModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward expects input as (B, C, T, H, W), returns logits (B, 1)"""
+        if self.backbone is None or self.head is None:
+            raise RuntimeError("X3D model not properly initialized")
         features = self.backbone(x)
         logits = self.head(features)
         return logits

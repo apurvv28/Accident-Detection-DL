@@ -19,11 +19,13 @@ class MongoDBConnector:
     MongoDB connection and operations manager
     """
     
-    def __init__(self):
+    def __init__(self, connect_immediately=True):
         load_dotenv()
         self.client = None
         self.db = None
-        self.connect()
+        self._connected = False
+        if connect_immediately:
+            self.connect()
     
     def connect(self):
         """Establish connection to MongoDB"""
@@ -52,18 +54,26 @@ class MongoDBConnector:
             # Create indexes for performance
             self._create_indexes()
             
-            logger.info(f"Connected to MongoDB: {database_name}")
+            # Only log connection on first connect
+            if not hasattr(MongoDBConnector, '_connection_logged'):
+                logger.info(f"Connected to MongoDB: {database_name}")
+                MongoDBConnector._connection_logged = True
+            self._connected = True
             return True
             
         except ConnectionFailure as e:
-            logger.error(f"MongoDB connection failed: {e}")
+            logger.warning(f"MongoDB connection failed: {e}")
+            logger.warning("App will continue but database operations may fail. Please ensure MongoDB is running.")
             self.client = None
             self.db = None
+            self._connected = False
             return False
         except Exception as e:
-            logger.error(f"Unexpected MongoDB error: {e}")
+            logger.warning(f"Unexpected MongoDB error: {e}")
+            logger.warning("App will continue but database operations may fail.")
             self.client = None
             self.db = None
+            self._connected = False
             return False
     
     def _create_collections(self):
@@ -79,30 +89,42 @@ class MongoDBConnector:
     
     def _create_indexes(self):
         """Create indexes for query performance"""
-        
-        # Cameras collection indexes
-        self.db.cameras.create_index([('camera_id', ASCENDING)], unique=True)
-        self.db.cameras.create_index([('status', ASCENDING)])
-        self.db.cameras.create_index([('location', '2dsphere')])
-        
-        # Detections collection indexes
-        self.db.detections.create_index([('timestamp', DESCENDING)])
-        self.db.detections.create_index([('camera_id', ASCENDING), ('timestamp', DESCENDING)])
-        self.db.detections.create_index([('is_accident', ASCENDING), ('timestamp', DESCENDING)])
-        self.db.detections.create_index([('confidence', DESCENDING)])
-        self.db.detections.create_index([('location', '2dsphere')])
-        self.db.detections.create_index([('detection_id', ASCENDING)], unique=True)
-        
-        # Alerts collection indexes
-        self.db.alerts.create_index([('timestamp', DESCENDING)])
-        self.db.alerts.create_index([('alert_id', ASCENDING)], unique=True)
-        self.db.alerts.create_index([('status', ASCENDING), ('timestamp', DESCENDING)])
-        
-        # System logs collection indexes
-        self.db.system_logs.create_index([('timestamp', DESCENDING)])
-        self.db.system_logs.create_index([('level', ASCENDING), ('timestamp', DESCENDING)])
-        
-        logger.info("Database indexes created/verified")
+        try:
+            # Cameras collection indexes
+            self.db.cameras.create_index([('camera_id', ASCENDING)], unique=True)
+            self.db.cameras.create_index([('status', ASCENDING)])
+            try:
+                self.db.cameras.create_index([('location', '2dsphere')])
+            except Exception:
+                pass  # 2dsphere index may fail if no location data
+            
+            # Detections collection indexes
+            self.db.detections.create_index([('timestamp', DESCENDING)])
+            self.db.detections.create_index([('camera_id', ASCENDING), ('timestamp', DESCENDING)])
+            self.db.detections.create_index([('is_accident', ASCENDING), ('timestamp', DESCENDING)])
+            self.db.detections.create_index([('confidence', DESCENDING)])
+            try:
+                self.db.detections.create_index([('location', '2dsphere')])
+            except Exception:
+                pass  # 2dsphere index may fail if no location data
+            self.db.detections.create_index([('detection_id', ASCENDING)], unique=True)
+            
+            # Alerts collection indexes
+            self.db.alerts.create_index([('timestamp', DESCENDING)])
+            self.db.alerts.create_index([('alert_id', ASCENDING)], unique=True)
+            self.db.alerts.create_index([('status', ASCENDING), ('timestamp', DESCENDING)])
+            
+            # System logs collection indexes
+            self.db.system_logs.create_index([('timestamp', DESCENDING)])
+            self.db.system_logs.create_index([('level', ASCENDING), ('timestamp', DESCENDING)])
+            
+            # Only log once on first connection
+            if not hasattr(self, '_indexes_created'):
+                logger.info("Database indexes created/verified")
+                self._indexes_created = True
+        except Exception as e:
+            # Silently handle index creation errors (they may already exist)
+            pass
     
     def test_connection(self):
         """Test if database connection is active"""

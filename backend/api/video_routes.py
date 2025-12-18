@@ -53,8 +53,18 @@ def get_or_create_default_camera(db, default_lat=28.6139, default_lng=77.2090):
         logger.warning(f"Failed to create default camera, using ID anyway: {e}")
         return DEFAULT_CAMERA_ID
 
-def process_video_async(video_path, camera_id, metadata):
+from collections import deque
+
+
+def process_video_async(video_path, camera_id, metadata, process_fps=2, video_id=None):
     """Process video in background thread using frame-by-frame processing."""
+    # Initialize status tracking if needed
+    if not hasattr(get_video_status, '_processing_status'):
+        get_video_status._processing_status = {}
+    
+    if video_id:
+        get_video_status._processing_status[video_id] = 'in_progress'
+    
     try:
         db = DatabaseManager()
         detector = AccidentDetector()
@@ -62,30 +72,89 @@ def process_video_async(video_path, camera_id, metadata):
         
         accident_count = 0
 
-        for frame in frame_generator_from_file(video_path, fps=current_app.config.get('PROCESS_FPS', 2)):
+        # keep small rolling buffer to create clips on detection
+        frame_buffer = deque(maxlen=32)
+
+        for frame in frame_generator_from_file(video_path, fps=process_fps):
+            # store frame in buffer
+            frame_buffer.append(frame.copy())
+
             pred = detector.process_frame(frame)
             if pred and pred.is_accident:
                 accident_count += 1
+
+                # create a unique detection id
+                detection_id = f"det_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+
+                # Try to get sequence frames/detections attached by detector
+                seq_frames = None
+                seq_dets = None
+                if getattr(pred, 'features', None):
+                    seq_frames = pred.features.get('sequence_frames')
+                    seq_dets = pred.features.get('sequence_detections')
+
+                # Fallback to recent buffer if sequence not present
+                frames_to_save = seq_frames if seq_frames else list(frame_buffer)
+
+                # Save annotated clip
+                from ..utils.video_utils import save_annotated_clip
+
+                accident_dir = os.path.join(os.getcwd(), 'uploads', 'processed', 'accidents')
+                os.makedirs(accident_dir, exist_ok=True)
+                clip_path = os.path.join(accident_dir, f"{detection_id}.mp4")
+
+                try:
+                    saved_path = save_annotated_clip(frames_to_save, seq_dets, clip_path, fps=process_fps)
+                except Exception as e:
+                    logger.error(f"Failed to save annotated clip for {detection_id}: {e}")
+                    saved_path = None
+
+                # Determine involved objects
+                involved_objects = []
+                try:
+                    if seq_dets:
+                        for frame_dets in seq_dets:
+                            for d in frame_dets:
+                                cls = getattr(d, 'class_name', getattr(d, 'class', None))
+                                if cls and cls not in involved_objects:
+                                    involved_objects.append(cls)
+                except Exception:
+                    pass
+
+                # Derive camera location if available
+                camera_info = db.get_camera(camera_id) or {}
+                location = camera_info.get('location') if isinstance(camera_info, dict) else None
+
                 detection_data = {
-                    'detection_id': f"det_{int(time.time())}_{uuid.uuid4().hex[:8]}",
+                    'detection_id': detection_id,
                     'camera_id': camera_id,
                     'timestamp': datetime.now(),
                     'video_path': video_path,
+                    'accident_video_path': saved_path,
                     'confidence': pred.confidence,
                     'bbox': None,
                     'vehicles_involved': pred.features.get('trajectories') if getattr(pred, 'features', None) else [],
+                    'involved_objects': involved_objects,
+                    'location': location,
                     'is_accident': True,
                     'severity': pred.severity,
+                    'severity_percent': round(float(pred.confidence) * 100.0, 1) if pred.confidence is not None else None,
                     'description': pred.description,
                     'metadata': metadata
                 }
+
                 db.insert_detection(detection_data)
                 alert.send_accident_alert(detection_data, camera_id)
 
         logger.info(f"Video processing completed: {video_path}, Accidents detected: {accident_count}")
+        
+        if video_id:
+            get_video_status._processing_status[video_id] = 'completed'
 
     except Exception as e:
         logger.error(f"Video processing failed: {str(e)}")
+        if video_id:
+            get_video_status._processing_status[video_id] = 'failed'
 
 @api_v1.route('/video/upload', methods=['POST'])
 def upload_video():
@@ -157,10 +226,13 @@ def upload_video():
         # Save file
         video_path = save_uploaded_file(file, unique_filename)
         
+        # Get config values before starting thread (to avoid app context issues)
+        process_fps = current_app.config.get('PROCESS_FPS', 2)
+        
         # Start async processing
         threading.Thread(
             target=process_video_async,
-            args=(video_path, camera_id, metadata),
+            args=(video_path, camera_id, metadata, process_fps, unique_filename),
             daemon=True
         ).start()
         
@@ -182,27 +254,54 @@ def upload_video():
             'message': f'Upload failed: {str(e)}'
         }), 500
 
-@api_v1.route('/video/status/<video_id>', methods=['GET'])
+@api_v1.route('/video/<video_id>/status', methods=['GET'])
 def get_video_status(video_id):
     """
     Get processing status of uploaded video
     """
     try:
-        db = DatabaseManager()
-        detection = db.get_detection_by_video(video_id)
+        # Store processing status in a simple in-memory dict
+        # In production, you might want to use Redis or database
+        if not hasattr(get_video_status, '_processing_status'):
+            get_video_status._processing_status = {}
         
-        if not detection:
-            return jsonify({
-                'status': 'error',
-                'message': 'Video not found'
-            }), 404
+        db = DatabaseManager()
+        
+        # Check if we have any detections for this video
+        detections = db.get_detections_paginated(
+            query={'video_path': {'$regex': video_id}},
+            page=1,
+            limit=1
+        )
+        
+        # Determine status based on detections
+        if detections:
+            processing_status = 'completed'
+            accidents_count = db.get_detections_count({
+                'video_path': {'$regex': video_id},
+                'is_accident': True
+            })
+            total_detections = db.get_detections_count({
+                'video_path': {'$regex': video_id}
+            })
+        else:
+            # Check in-memory status first
+            if video_id in get_video_status._processing_status:
+                processing_status = get_video_status._processing_status[video_id]
+            else:
+                # If no detections yet, assume still processing
+                processing_status = 'in_progress'
+            accidents_count = 0
+            total_detections = 0
         
         return jsonify({
             'status': 'success',
-            'video_id': video_id,
-            'processing_status': detection.get('status', 'unknown'),
-            'detections_count': len(detection.get('detections', [])),
-            'accidents_detected': sum(1 for d in detection.get('detections', []) if d.get('is_accident', False))
+            'data': {
+                'video_id': video_id,
+                'processing_status': processing_status,
+                'detections_count': total_detections,
+                'accidents_detected': accidents_count
+            }
         }), 200
         
     except Exception as e:

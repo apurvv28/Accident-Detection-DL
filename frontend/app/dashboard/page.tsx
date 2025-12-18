@@ -1,15 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { dashboardApi } from '@/lib/api';
+import { dashboardApi, accidentApi } from '@/lib/api';
 import { StatCard } from '@/components/ui/StatCard';
 import { Button } from '@/components/ui/Button';
+import AlertPopup from '@/components/AlertPopup';
 import { 
   Camera, 
   Activity, 
   AlertTriangle, 
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  Shield
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import toast from 'react-hot-toast';
@@ -78,15 +80,24 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {/* Real-time Alert Popup Component */}
+      <AlertPopup />
+      
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-gray-600 mt-1">Real-time system overview and statistics</p>
         </div>
-        <Button onClick={handleRefresh} disabled={refreshing}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 rounded-full">
+            <Shield className="h-4 w-4 text-green-600" />
+            <span className="text-sm font-medium text-green-700">Live Monitoring</span>
+          </div>
+          <Button onClick={handleRefresh} disabled={refreshing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {overview && (
